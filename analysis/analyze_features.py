@@ -16,6 +16,7 @@ warnings.filterwarnings('ignore')
 def load_data(file_path: str) -> pd.DataFrame:
     """Load and preprocess the time series data."""
     df = pd.read_csv(file_path)
+
     df['time'] = pd.to_datetime(df['time'])
     df.set_index('time', inplace=True)
     return df
@@ -33,7 +34,7 @@ def calculate_correlation_metrics(df: pd.DataFrame, target_col: str,
         spearman_corr = df[target_col].corr(df[col], method='spearman')
         kendall_tau = df[target_col].corr(df[col], method='kendall')
 
-        max_lag = 24 
+        max_lag = 24
         cross_corrs = []
         for lag in range(-max_lag, max_lag + 1):
             cross_corr = df[target_col].corr(df[col].shift(lag))
@@ -113,7 +114,7 @@ def calculate_stationarity(df: pd.DataFrame, target_col: str,
                 'feature': col,
                 'adf_statistic': np.nan,
                 'adf_p_value': np.nan,
-                'is_stationary': True, 
+                'is_stationary': True,
                 'is_constant': True
             })
             continue
@@ -224,7 +225,8 @@ def create_latex_table(results_df: pd.DataFrame, output_path: str) -> None:
 
 
 if __name__ == "__main__":
-    data_dir = "../data/cleaned"
+    # Get all CSV files in the cleaned data directory
+    data_dir = "data/cleaned"  # Changed from "../data/cleaned"
     csv_files = glob.glob(os.path.join(data_dir, "*.csv"))
 
     if not csv_files:
@@ -233,13 +235,17 @@ if __name__ == "__main__":
         print(f"Found {len(csv_files)} CSV files to process")
 
         for file_path in csv_files:
+            # Extract the base name without extension for output files
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             print(f"\nProcessing {base_name}...")
 
+            # Set target column based on file name
             if "spain" in base_name.lower():
                 target_col = "total load actual"
-            else:
-                target_col = "total load actual"
+            elif "homestead" in base_name.lower():
+                target_col = "Consumption"
+            elif "ercot" in base_name.lower():
+                target_col = "ACTUAL_NetLoad"
 
             results = analyze_features(
                 file_path=file_path,
@@ -248,13 +254,16 @@ if __name__ == "__main__":
                 output_path=f"{base_name}_feature_importance.csv"
             )
 
+            # Print top 10 most important features
             print(f"\nTop 10 most important features for {base_name}:")
             print(results['results'].head(10))
 
+            # Save the full results DataFrame
             results['results'].to_csv(
                 f"{base_name}_feature_importance.csv", index=False)
             print(f"Results saved to '{base_name}_feature_importance.csv'")
 
+            # Create and save LaTeX table
             create_latex_table(results['results'],
                                f"{base_name}_top_features_latex.tex")
             print(f"LaTeX table saved to '{base_name}_top_features_latex.tex'")
