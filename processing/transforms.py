@@ -196,3 +196,8 @@ class TransformSequence(DataTransform):
         super().set_device(device)
         for t in self.transforms:
             t.set_device(device)
+
+    def change_transform_cols(self, num_transform_cols: int) -> None:
+        self.num_transform_cols = num_transform_cols
+        for t in self.transforms:
+            t.change_transform_cols(num_transform_cols)

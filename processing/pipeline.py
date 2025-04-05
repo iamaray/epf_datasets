@@ -10,7 +10,8 @@ import json
 import pytz
 
 from .utils import generate_data_report
-from .transforms import StandardScaleNorm, MinMaxNorm, TransformSequence
+from .transforms import StandardScaleNorm, MinMaxNorm, TransformSequence, DataTransform
+from cfgs.cfg import Config
 
 
 def formPairs(
@@ -86,6 +87,16 @@ def formPairsAR(
     return target_seq, covariate_seq, mask_seq
 
 
+def convert_date_for_comparison(date_obj, is_tz_aware):
+    if is_tz_aware and date_obj.tzinfo is None:
+        # If data has timezone but comparison date doesn't, add UTC timezone
+        return pytz.UTC.localize(date_obj)
+    elif not is_tz_aware and date_obj.tzinfo is not None:
+        # If data has no timezone but comparison date does, remove timezone
+        return date_obj.replace(tzinfo=None)
+    return date_obj
+
+
 def benchmark_preprocess(
         csv_path="data/ercot_data_cleaned.csv",
         train_start_end=(datetime(2023, 2, 10), datetime(2024, 7, 1)),
@@ -101,10 +112,9 @@ def benchmark_preprocess(
         num_workers: int = 1,
         included_feats=None,
         num_transform_cols=2,
-        train_transforms=[StandardScaleNorm(device='cpu')],
+        train_transform: DataTransform = None,
         ar_model: bool = False,
-        output_dir=None,
-        date_column="Unnamed: 0"):
+        output_dir=None):
     """
     Loads the cleaned CSV data and performs time-series splitting, transformation,
     windowing (pair formation), and creation of DataLoaders. The datasets and loaders
@@ -116,50 +126,35 @@ def benchmark_preprocess(
     Returns the list of fitted transform objects.
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if train_transforms is None:
-        train_transforms = [StandardScaleNorm(device=device)]
+    if train_transform is None:
+        train_transform = StandardScaleNorm(device=device)
 
     raw_df = pd.read_csv(csv_path)
 
-    # Find date column (try common names if specified column doesn't exist)
-    if date_column in raw_df.columns:
-        date_series = pd.to_datetime(raw_df[date_column])
-        raw_df = raw_df.drop(date_column, axis=1)
-    elif "time" in raw_df.columns:
-        date_series = pd.to_datetime(raw_df["time"])
-        raw_df = raw_df.drop("time", axis=1)
-    elif "date" in raw_df.columns:
-        date_series = pd.to_datetime(raw_df["date"])
-        raw_df = raw_df.drop("date", axis=1)
-    elif "datetime" in raw_df.columns:
-        date_series = pd.to_datetime(raw_df["datetime"])
-        raw_df = raw_df.drop("datetime", axis=1)
-    else:
-        # Assume first column is the date column
-        date_series = pd.to_datetime(raw_df.iloc[:, 0])
-        raw_df = raw_df.iloc[:, 1:]
-        print(
-            f"Warning: No date column found with name '{date_column}'. Using first column as date.")
+    date_column = 'time'
+    assert (date_column in raw_df.colunns)
+    date_series = pd.to_datetime(raw_df[date_column])
+    raw_df = raw_df.drop(date_column, axis=1)
 
     # Handle timezone differences
     is_tz_aware = date_series.dt.tz is not None
 
-    # Convert dates for comparison based on timezone awareness
-    def convert_date_for_comparison(date_obj):
-        if is_tz_aware and date_obj.tzinfo is None:
-            # If data has timezone but comparison date doesn't, add UTC timezone
-            return pytz.UTC.localize(date_obj)
-        elif not is_tz_aware and date_obj.tzinfo is not None:
-            # If data has no timezone but comparison date does, remove timezone
-            return date_obj.replace(tzinfo=None)
-        return date_obj
+    # Convert all date ranges for comparison with consistent timezone handling
+    periods = {
+        'train': train_start_end,
+        'val': val_start_end,
+        'test': test_start_end
+    }
 
-    train_start = convert_date_for_comparison(train_start_end[0])
-    train_end = convert_date_for_comparison(train_start_end[1])
-    val_start = convert_date_for_comparison(val_start_end[0])
-    val_end = convert_date_for_comparison(val_start_end[1])
-    test_start = convert_date_for_comparison(test_start_end[0])
-    test_end = convert_date_for_comparison(test_start_end[1])
+    dates = {}
+    for period, (start, end) in periods.items():
+        dates[f'{period}_start'] = convert_date_for_comparison(
+            start, is_tz_aware)
+        dates[f'{period}_end'] = convert_date_for_comparison(end, is_tz_aware)
+
+    train_start, train_end = dates['train_start'], dates['train_end']
+    val_start, val_end = dates['val_start'], dates['val_end']
+    test_start, test_end = dates['test_start'], dates['test_end']
 
     # Filter features if specified
     if included_feats is not None:
@@ -177,18 +172,13 @@ def benchmark_preprocess(
     val_tensor = torch.tensor(val_df.to_numpy(), device=device).float()
     test_tensor = torch.tensor(test_df.to_numpy(), device=device).float()
 
-    # if spatial:
-    #     for t in train_transforms:
-    #         t.change_transform_cols(12)
-    # else:
-    #     for t in train_transforms:
-    #         t.change_transform_cols(3)
+    if train_transform is not None:
+        train_transform.change_transform_cols(num_transform_cols)
+        train_transform.fit(train_tensor.unsqueeze(0).to(device))
 
-    for t in train_transforms:
-        t.change_transform_cols(num_transform_cols)
-
-        t.fit(train_tensor.unsqueeze(0).to(device))
-        train_tensor = t.transform(train_tensor)
+        train_tensor = train_transform.transform(train_tensor)
+        val_tensor = train_transform.transform(val_tensor)
+        # test_tensor = train_transform.transform(test_tensor)
 
     suffix = "spatial" if spatial else "non_spatial"
 
@@ -267,125 +257,68 @@ def benchmark_preprocess(
     print(f"Saving test loader to: {test_loader_path}")
     torch.save(test_loader, test_loader_path)
 
-    if len(train_transforms) > 1:
-        train_transforms = TransformSequence(train_transforms, device)
-        transforms_path = os.path.join(output_dir, f"transforms_{suffix}.pt")
-        print(f"Saving transforms to: {transforms_path}")
-        torch.save(train_transforms, transforms_path)
+    if train_transform is not None:
+        transform_path = os.path.join(output_dir, f"transform_{suffix}.pt")
+        print(f"Saving transform to: {transform_path}")
+        torch.save(train_transform, transform_path)
     else:
-        transforms_path = os.path.join(output_dir, f"transforms_{suffix}.pt")
-        print(f"Saving transforms to: {transforms_path}")
-        torch.save(train_transforms[0], transforms_path)
+        print("Train transform not given.")
 
-    # Generate report with data processing summary
-    config_dict = {
-        'csv_path': csv_path,
-        'train_start': train_start_end[0].strftime("%Y-%m-%d") if hasattr(train_start_end[0], 'strftime') else str(train_start_end[0]),
-        'train_end': train_start_end[1].strftime("%Y-%m-%d") if hasattr(train_start_end[1], 'strftime') else str(train_start_end[1]),
-        'val_start': val_start_end[0].strftime("%Y-%m-%d") if hasattr(val_start_end[0], 'strftime') else str(val_start_end[0]),
-        'val_end': val_start_end[1].strftime("%Y-%m-%d") if hasattr(val_start_end[1], 'strftime') else str(val_start_end[1]),
-        'test_start': test_start_end[0].strftime("%Y-%m-%d") if hasattr(test_start_end[0], 'strftime') else str(test_start_end[0]),
-        'test_end': test_start_end[1].strftime("%Y-%m-%d") if hasattr(test_start_end[1], 'strftime') else str(test_start_end[1]),
-        'x_start_hour': x_start_hour,
-        'x_y_gap': x_y_gap,
-        'x_window': x_window,
-        'y_window': y_window,
-        'step_size': step_size,
-        'batch_size': batch_size,
-        'num_workers': num_workers,
-        'included_feats': included_feats,
-        'num_transform_cols': num_transform_cols,
-        'spatial': spatial,
-        'ar_model': ar_model,
-        'date_column': date_column
-    }
-
-    if ar_model:
-        generate_data_report(
-            output_dir=output_dir,
-            suffix=suffix,
-            config=config_dict,
-            train_tensor=train_tensor,
-            val_tensor=val_tensor,
-            test_tensor=test_tensor,
-            X_train=X_train_target,
-            Y_train=None,  # No separate Y for AR models
-            X_val=X_val_target,
-            Y_val=None,
-            X_test=X_test_target,
-            Y_test=None,
-            train_transforms=train_transforms,
-            included_feats=included_feats,
-            ar_model=ar_model
-        )
-    else:
-        generate_data_report(
-            output_dir=output_dir,
-            suffix=suffix,
-            config=config_dict,
-            train_tensor=train_tensor,
-            val_tensor=val_tensor,
-            test_tensor=test_tensor,
-            X_train=X_train,
-            Y_train=Y_train,
-            X_val=X_val,
-            Y_val=Y_val,
-            X_test=X_test,
-            Y_test=Y_test,
-            train_transforms=train_transforms,
-            included_feats=included_feats,
-            ar_model=ar_model
-        )
-
-    return train_transforms
+    return train_transform
 
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser(
-#         description='Data preprocessing for power consumption dataset')
-#     parser.add_argument('--config_path', type=str, default='cfgs/data_proc/spain_data/spain_dataset_non_spatial_ar.json',
-#                         help='Path to the config file containing preprocessing parameters')
-#     args = parser.parse_args()
+def preprocess_on_cfg(config: Config):
+    """
+    Wrapper function that runs preprocessing on a Config dataclass.
 
-#     with open(args.config_path, 'r') as f:
-#         config = json.load(f)
+    Args:
+        config: Config dataclass containing preprocessing parameters
+        transform: Optional transform to apply to the data
+        output_dir: Directory to save processed data
+        suffix: Optional suffix to add to output filenames
 
-#     def parse_date(date_value, default_date):
-#         if not date_value:
-#             return default_date
-#         if isinstance(date_value, str):
-#             return datetime.strptime(date_value, "%Y-%m-%d")
-#         return default_date
+    Returns:
+        The fitted transform used for training data
+    """
+    train_start_end = (pd.to_datetime(config.train_start),
+                       pd.to_datetime(config.train_end))
+    val_start_end = (pd.to_datetime(config.val_start),
+                     pd.to_datetime(config.val_end))
+    test_start_end = (pd.to_datetime(config.test_start),
+                      pd.to_datetime(config.test_end))
 
-#     train_start = parse_date(config.get("train_start"), datetime(2023, 2, 10))
-#     train_end = parse_date(config.get("train_end"), datetime(2024, 7, 1))
-#     val_start = parse_date(config.get("val_start"), datetime(2024, 7, 1))
-#     val_end = parse_date(config.get("val_end"), datetime(2024, 9, 1))
-#     test_start = parse_date(config.get("test_start"), datetime(2024, 9, 1))
-#     test_end = parse_date(config.get("test_end"), datetime(2025, 1, 6))
+    transform = None
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-#     train_transforms = [StandardScaleNorm(device=device)]
+    if config.transforms:
+        if len(config.transforms) == 1:
+            transform_name = config.transforms[0]
+            assert (transform_name in usable_transforms.keys()
+                    ), f"Transform {transform_name} not found"
+            transform = usable_transforms[transform_name](device=device)
+        else:
+            transform_names = config.transforms
+            assert (set(transform_names).issubset(
+                set(usable_transforms.keys()))), "One or more transforms not found"
+            transform = TransformSequence(
+                transforms=[usable_transforms[k](device=device) for k in transform_names])
 
-#     transforms = benchmark_preprocess(
-#         csv_path=config.get("csv_path", "data/ercot_data_cleaned.csv"),
-#         train_start_end=(train_start, train_end),
-#         val_start_end=(val_start, val_end),
-#         test_start_end=(test_start, test_end),
-#         spatial=config.get("spatial", False),
-#         x_start_hour=config.get("x_start_hour", 9),
-#         x_y_gap=config.get("x_y_gap", 15),
-#         x_window=config.get("x_window", 168),
-#         y_window=config.get("y_window", 24),
-#         step_size=config.get("step_size", 24),
-#         batch_size=config.get("batch_size", 64),
-#         num_workers=config.get("num_workers", 1),
-#         included_feats=config.get("included_feats", None),
-#         num_transform_cols=config.get("num_transform_cols", 2),
-#         train_transforms=train_transforms,
-#         ar_model=config.get("ar_model", False),
-#         output_dir=config.get("output_dir", None),
-#         date_column=config.get("date_column", "Unnamed: 0")
-#     )
-
-#     print(f"Data preprocessing completed successfully. Transforms saved.")
+    return benchmark_preprocess(
+        csv_path=config.csv_path,
+        train_start_end=train_start_end,
+        val_start_end=val_start_end,
+        test_start_end=test_start_end,
+        spatial=config.spatial,
+        x_start_hour=config.x_start_hour,
+        x_y_gap=config.x_y_gap,
+        x_window=config.x_window,
+        y_window=config.y_window,
+        step_size=config.step_size,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        included_feats=config.included_feats,
+        num_transform_cols=config.num_transform_cols,
+        train_transform=transform,
+        ar_model=config.ar_model,
+        output_dir=config.output_dir
+    )
