@@ -17,7 +17,7 @@ def main(cfg_path):
         config_dict = json.load(f)
     config = Config(**config_dict)
 
-    _ = preprocess_on_cfg(config)
+    _ = preprocess_on_cfg(config, usable_transforms)
 
 
 if __name__ == "__main__":
@@ -26,7 +26,5 @@ if __name__ == "__main__":
     parser.add_argument('--config_path', type=str, default='cfgs/data_proc/spain_data/spain_dataset_non_spatial_ar.json',
                         help='Path to the config file containing preprocessing parameters')
     args = parser.parse_args()
-    
-    main(*args)
-    
-    
+
+    main(args.config_path)

@@ -46,6 +46,6 @@
   ],
   "num_transform_cols": 25,
   "spatial": false,
-  "output_dir": "data/spain_data",
+  "output_dir": "data/torch/spain_data",
   "transforms": ["standard_scale"]
 }

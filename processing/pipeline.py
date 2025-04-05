@@ -132,7 +132,7 @@ def benchmark_preprocess(
     raw_df = pd.read_csv(csv_path)
 
     date_column = 'time'
-    assert (date_column in raw_df.colunns)
+    assert (date_column in raw_df.columns)
     date_series = pd.to_datetime(raw_df[date_column])
     raw_df = raw_df.drop(date_column, axis=1)
 
@@ -156,9 +156,22 @@ def benchmark_preprocess(
     val_start, val_end = dates['val_start'], dates['val_end']
     test_start, test_end = dates['test_start'], dates['test_end']
 
-    # Filter features if specified
     if included_feats is not None:
         raw_df = raw_df[included_feats]
+
+    for col in raw_df.columns:
+        if raw_df[col].dtype == 'object':
+            raw_df = pd.get_dummies(raw_df, columns=[col])
+
+    for col in raw_df.columns:
+        if not pd.api.types.is_numeric_dtype(raw_df[col]):
+            raw_df[col] = pd.to_numeric(raw_df[col], errors='coerce')
+            raw_df[col] = raw_df[col].fillna(0)
+
+    for col in raw_df.columns:
+        if not pd.api.types.is_numeric_dtype(raw_df[col]):
+            raise ValueError(
+                f"Column {col} could not be converted to numeric type. Current dtype: {raw_df[col].dtype}")
 
     train_mask = (date_series >= train_start) & (date_series < train_end)
     val_mask = (date_series >= val_start) & (date_series < val_end)
@@ -168,9 +181,13 @@ def benchmark_preprocess(
     val_df = raw_df[val_mask]
     test_df = raw_df[test_mask]
 
-    train_tensor = torch.tensor(train_df.to_numpy(), device=device).float()
-    val_tensor = torch.tensor(val_df.to_numpy(), device=device).float()
-    test_tensor = torch.tensor(test_df.to_numpy(), device=device).float()
+    train_array = train_df.to_numpy(dtype=np.float32)
+    val_array = val_df.to_numpy(dtype=np.float32)
+    test_array = test_df.to_numpy(dtype=np.float32)
+
+    train_tensor = torch.tensor(train_array, device=device).float()
+    val_tensor = torch.tensor(val_array, device=device).float()
+    test_tensor = torch.tensor(test_array, device=device).float()
 
     if train_transform is not None:
         train_transform.change_transform_cols(num_transform_cols)
@@ -267,7 +284,7 @@ def benchmark_preprocess(
     return train_transform
 
 
-def preprocess_on_cfg(config: Config):
+def preprocess_on_cfg(config: Config, usable_transforms: dict):
     """
     Wrapper function that runs preprocessing on a Config dataclass.
 
