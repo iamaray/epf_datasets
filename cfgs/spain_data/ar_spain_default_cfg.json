@@ -1,5 +1,5 @@
 {
-  "csv_path": "data/cleaned_spain_data.csv",
+  "csv_path": "data/cleaned/cleaned_spain_data.csv",
   "train_start": "2015-01-01 00:00:00+00:00",
   "train_end": "2017-05-26 00:00:00+00:00",
   "val_start": "2017-05-26 01:00:00+00:00",
