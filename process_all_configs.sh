@@ -1,16 +1,13 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
-# Function to process a single config file
 process_config() {
     local config_file=$1
     echo "Processing config: $config_file"
     python main.py --config_path "$config_file"
 }
 
-# Process all config files in each dataset directory
 for dataset_dir in cfgs/*_data/; do
     if [ -d "$dataset_dir" ]; then
         echo "Processing configs in $dataset_dir"
