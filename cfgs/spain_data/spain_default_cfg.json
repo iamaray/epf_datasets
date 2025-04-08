@@ -15,6 +15,7 @@
   "batch_size": 64,
   "num_workers": 1,
   "included_feats": [
+    "total load actual",
     "generation biomass",
     "generation fossil brown coal/lignite",
     "generation fossil coal-derived gas",
@@ -37,7 +38,6 @@
     "generation wind onshore",
     "forecast solar day ahead",
     "total load forecast",
-    "total load actual",
     "price day ahead",
     "price actual",
     "HoD",

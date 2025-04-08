@@ -15,6 +15,7 @@
   "batch_size": 64,
   "num_workers": 1,
   "included_feats": [
+    "Consumption",
     "Homestead_maxtempC",
     "Homestead_mintempC",
     "Homestead_DewPointC",
@@ -30,7 +31,6 @@
     "Homestead_visibility",
     "Homestead_windspeedKmph",
     "Homestead_winddirDegree",
-    "Consumption",
     "HoD",
     "DoW",
     "MoY"

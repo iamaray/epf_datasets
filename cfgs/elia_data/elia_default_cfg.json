@@ -15,8 +15,8 @@
   "batch_size": 64,
   "num_workers": 1,
   "included_feats": [
-    "Resolution code",
     "Total Load",
+    "Resolution code",
     "Day-ahead 6PM forecast",
     "Day-ahead 6PM P10",
     "Day-ahead 6PM P90",
