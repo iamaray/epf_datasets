@@ -36,15 +36,13 @@
     "generation waste",
     "generation wind offshore",
     "generation wind onshore",
-    "forecast solar day ahead",
-    "total load forecast",
     "price day ahead",
     "price actual",
     "HoD",
     "DoW",
     "MoY"
   ],
-  "num_transform_cols": 25,
+  "num_transform_cols": 23,
   "spatial": false,
   "output_dir": "data/torch/spain_data",
   "transforms": ["standard_scale"]

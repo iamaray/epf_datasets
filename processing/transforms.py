@@ -124,9 +124,10 @@ class StandardScaleNorm(DataTransform):
 
     def fit(self, x: torch.Tensor) -> None:
         self.mean = x[..., :self.num_transform_cols].mean(
-            dim=1, keepdim=True).to(self.device).float()
+            dim=tuple(range(x.dim()-1)), keepdim=True).to(self.device).float()
         self.std = x[..., :self.num_transform_cols].std(
-            dim=1, keepdim=True).to(self.device).float()
+            dim=tuple(range(x.dim()-1)), keepdim=True).to(self.device).float()
+        self.std = torch.clamp(self.std, min=1e-8)
 
     def transform(self, x: torch.Tensor, transform_col: Optional[int] = None) -> torch.Tensor:
         x_transformed = x.clone()

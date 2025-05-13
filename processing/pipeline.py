@@ -31,6 +31,7 @@ def formPairs(
     N = x_tensor.shape[0]
     x_start = x_start_hour - 1
     X, Y = [], []
+
     while (x_start + x_window + x_y_gap + y_window) < N:
         x = x_tensor[x_start: x_start + x_window, :]
         y = y_tensor[x_start + x_window + x_y_gap:
@@ -38,6 +39,7 @@ def formPairs(
         X.append(x)
         Y.append(y)
         x_start += step_size
+
     X = torch.stack(X)  # Shape: [num_samples, x_window, num_features]
     Y = torch.stack(Y)  # Shape: [num_samples, y_window]
     return X, Y
@@ -133,8 +135,32 @@ def benchmark_preprocess(
 
     date_column = 'time'
     assert (date_column in raw_df.columns)
-    date_series = pd.to_datetime(raw_df[date_column])
+    # Ensure proper datetime conversion with explicit format and error handling
+    try:
+        date_series = pd.to_datetime(
+            raw_df[date_column], utc=True, errors='coerce')
+        # Check for NaT values that would indicate conversion failures
+        if date_series.isna().any():
+            print(
+                f"Warning: {date_series.isna().sum()} date values couldn't be parsed")
+            # Show a sample of problematic values
+            problem_indices = raw_df[date_series.isna()].index[:5]
+            if len(problem_indices) > 0:
+                print(
+                    f"Sample problematic values: {raw_df.loc[problem_indices, date_column].tolist()}")
+    except Exception as e:
+        print(f"Error converting dates: {e}")
+        # Fallback approach with more explicit parsing
+        date_series = pd.to_datetime(
+            raw_df[date_column], format='ISO8601', utc=True, errors='coerce')
+
     raw_df = raw_df.drop(date_column, axis=1)
+    print(raw_df.head())
+    # raw_df = raw_df.astype(float)
+
+    print(f"Date series type: {type(date_series)}")
+    print(f"Date series dtype: {date_series.dtype}")
+    print(f"First few dates: {date_series[:5]}")
 
     # Handle timezone differences
     is_tz_aware = date_series.dt.tz is not None
@@ -189,12 +215,27 @@ def benchmark_preprocess(
     val_tensor = torch.tensor(val_array, device=device).float()
     test_tensor = torch.tensor(test_array, device=device).float()
 
+    print("TRANSFORMED TRAIN MAX:", torch.max(
+        train_tensor[:, 0].unsqueeze(-1)))
+
     if train_transform is not None:
         train_transform.change_transform_cols(num_transform_cols)
         train_transform.fit(train_tensor.unsqueeze(0).to(device))
 
+        print(
+            f"TRAIN MEAN, STD: {torch.mean(train_transform.mean)}, {torch.mean(train_transform.std)}")
+
         train_tensor = train_transform.transform(train_tensor)
+
+        # print("TRAIN TENSOR SHAPE", train_tensor.shape)
+        print("TRANSFORMED TRAIN MAX:", torch.max(
+            train_tensor[:, 0].unsqueeze(-1)))
+
         val_tensor = train_transform.transform(val_tensor)
+
+        print("TRANSFORMED TRAIN MAX:", torch.max(
+            train_tensor[:, 0].unsqueeze(-1)))
+
         # test_tensor = train_transform.transform(test_tensor)
 
     suffix = "spatial" if spatial else "non_spatial"
